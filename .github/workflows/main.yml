@@ -1,0 +1,11 @@
+name: My First Workflow
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+      - name: Run a simple script
+        run: echo "Hello Cloudflow! The workflow is running."
+
