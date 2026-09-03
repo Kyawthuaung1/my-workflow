@@ -1,7 +1,9 @@
 export default {
   async fetch(request, env) {
-    // Allow GET for a simple health check
-    if (request.method === "GET") {
+    const url = new URL(request.url);
+
+    // Health check
+    if (request.method === "GET" && url.pathname === "/") {
       return json({
         ok: true,
         service: "trade-plan-api",
@@ -9,28 +11,68 @@ export default {
       });
     }
 
-    // Only POST for analysis
-    if (request.method !== "POST") {
-      return json(
-        {
+    // CMC test
+    if (request.method === "GET" && url.pathname === "/cmc-test") {
+      const symbol = (url.searchParams.get("symbol") || "BTC").toUpperCase();
+
+      try {
+        const cmcUrl =
+          `https://pro-api.coinmarketcap.com/v3/cryptocurrency/quotes/latest` +
+          `?symbol=${encodeURIComponent(symbol)}&convert=USD`;
+
+        const response = await fetch(cmcUrl, {
+          method: "GET",
+          headers: {
+            "Accept": "application/json",
+            "X-CMC_PRO_API_KEY": env.CMC_API_KEY
+          }
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          return json({
+            ok: false,
+            source: "coinmarketcap",
+            error: "CMC API request failed.",
+            details: data
+          }, response.status);
+        }
+
+        return json({
+          ok: true,
+          source: "coinmarketcap",
+          symbol,
+          data
+        });
+
+      } catch (error) {
+        return json({
           ok: false,
-          error: "Method not allowed. Use POST."
-        },
-        405
-      );
+          source: "coinmarketcap",
+          error: error instanceof Error
+            ? error.message
+            : String(error)
+        }, 500);
+      }
+    }
+
+    // Existing Gemini POST endpoint
+    if (request.method !== "POST") {
+      return json({
+        ok: false,
+        error: "Method not allowed."
+      }, 405);
     }
 
     try {
       const marketData = await request.json();
 
       if (!marketData || typeof marketData !== "object") {
-        return json(
-          {
-            ok: false,
-            error: "Invalid market data."
-          },
-          400
-        );
+        return json({
+          ok: false,
+          error: "Invalid market data."
+        }, 400);
       }
 
       const prompt = `
@@ -130,58 +172,36 @@ ${JSON.stringify(marketData)}
       const data = await response.json();
 
       if (!response.ok) {
-        return json(
-          {
-            ok: false,
-            error: "Gemini API request failed.",
-            details: data
-          },
-          response.status
-        );
+        return json({
+          ok: false,
+          error: "Gemini API request failed.",
+          details: data
+        }, response.status);
       }
 
       const text =
         data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
       if (!text) {
-        return json(
-          {
-            ok: false,
-            error: "Gemini returned no analysis."
-          },
-          502
-        );
-      }
-
-      let analysis;
-
-      try {
-        analysis = JSON.parse(text);
-      } catch {
-        return json(
-          {
-            ok: false,
-            error: "Gemini returned invalid JSON.",
-            raw: text
-          },
-          502
-        );
+        return json({
+          ok: false,
+          error: "Gemini returned no analysis."
+        }, 502);
       }
 
       return json({
         ok: true,
-        analysis
+        analysis: JSON.parse(text)
       });
 
     } catch (error) {
-      return json(
-        {
-          ok: false,
-          error: "Server error.",
-          message: error instanceof Error ? error.message : String(error)
-        },
-        500
-      );
+      return json({
+        ok: false,
+        error: "Server error.",
+        message: error instanceof Error
+          ? error.message
+          : String(error)
+      }, 500);
     }
   }
 };
