@@ -1,126 +1,196 @@
 export default {
   async fetch(request, env) {
+    // Allow GET for a simple health check
+    if (request.method === "GET") {
+      return json({
+        ok: true,
+        service: "trade-plan-api",
+        status: "running"
+      });
+    }
+
+    // Only POST for analysis
     if (request.method !== "POST") {
-      return new Response(
-        "Please send POST request with Market Data.",
-        { status: 405 }
+      return json(
+        {
+          ok: false,
+          error: "Method not allowed. Use POST."
+        },
+        405
       );
     }
 
     try {
       const marketData = await request.json();
 
-      const geminiUrl =
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent?key=${env.GEMINI_API_KEY}`;
+      if (!marketData || typeof marketData !== "object") {
+        return json(
+          {
+            ok: false,
+            error: "Invalid market data."
+          },
+          400
+        );
+      }
 
       const prompt = `
-You are a professional crypto trading analyst.
+You are a market-data analysis assistant.
 
-Analyze the following market data and create a trade plan.
+Analyze the supplied market data carefully.
 
 Return ONLY valid JSON.
+Do not add markdown.
+Do not invent missing data.
 
-Market Data:
+Required JSON fields:
+{
+  "symbol": string,
+  "timeframe": string,
+  "data_timestamp": string,
+  "market_summary": string,
+  "trend": "bullish" | "bearish" | "neutral" | "unknown",
+  "momentum": "strong" | "weak" | "mixed" | "unknown",
+  "support_resistance": {
+    "support": string,
+    "resistance": string
+  },
+  "risk_flags": string[],
+  "data_quality": "good" | "partial" | "poor"
+}
+
+Market data:
 ${JSON.stringify(marketData)}
 `;
+
+      const geminiUrl =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent";
 
       const response = await fetch(geminiUrl, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "x-goog-api-key": env.GEMINI_API_KEY
         },
         body: JSON.stringify({
           contents: [
             {
-              parts: [
-                {
-                  text: prompt
-                }
-              ]
+              parts: [{ text: prompt }]
             }
           ],
           generationConfig: {
             responseMimeType: "application/json",
             responseSchema: {
-              type: "OBJECT",
+              type: "object",
               properties: {
-                symbol: { type: "STRING" },
-                side: { type: "STRING" },
-                entry: { type: "NUMBER" },
-                stop_loss: { type: "NUMBER" },
-                take_profit: { type: "NUMBER" },
-                confidence: { type: "NUMBER" },
-                analysis: { type: "STRING" }
+                symbol: { type: "string" },
+                timeframe: { type: "string" },
+                data_timestamp: { type: "string" },
+                market_summary: { type: "string" },
+                trend: {
+                  type: "string",
+                  enum: ["bullish", "bearish", "neutral", "unknown"]
+                },
+                momentum: {
+                  type: "string",
+                  enum: ["strong", "weak", "mixed", "unknown"]
+                },
+                support_resistance: {
+                  type: "object",
+                  properties: {
+                    support: { type: "string" },
+                    resistance: { type: "string" }
+                  },
+                  required: ["support", "resistance"]
+                },
+                risk_flags: {
+                  type: "array",
+                  items: { type: "string" }
+                },
+                data_quality: {
+                  type: "string",
+                  enum: ["good", "partial", "poor"]
+                }
               },
               required: [
                 "symbol",
-                "side",
-                "entry",
-                "stop_loss",
-                "take_profit",
-                "confidence",
-                "analysis"
+                "timeframe",
+                "data_timestamp",
+                "market_summary",
+                "trend",
+                "momentum",
+                "support_resistance",
+                "risk_flags",
+                "data_quality"
               ]
             }
           }
         })
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-
-        return new Response(
-          JSON.stringify({
-            error: "Gemini API error",
-            details: errorText
-          }),
-          {
-            status: 500,
-            headers: {
-              "Content-Type": "application/json"
-            }
-          }
-        );
-      }
-
       const data = await response.json();
 
-      const result =
-        data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-      if (!result) {
-        return new Response(
-          JSON.stringify({
-            error: "No trade plan returned by Gemini"
-          }),
+      if (!response.ok) {
+        return json(
           {
-            status: 500,
-            headers: {
-              "Content-Type": "application/json"
-            }
-          }
+            ok: false,
+            error: "Gemini API request failed.",
+            details: data
+          },
+          response.status
         );
       }
 
-      return new Response(result, {
-        headers: {
-          "Content-Type": "application/json"
-        }
+      const text =
+        data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (!text) {
+        return json(
+          {
+            ok: false,
+            error: "Gemini returned no analysis."
+          },
+          502
+        );
+      }
+
+      let analysis;
+
+      try {
+        analysis = JSON.parse(text);
+      } catch {
+        return json(
+          {
+            ok: false,
+            error: "Gemini returned invalid JSON.",
+            raw: text
+          },
+          502
+        );
+      }
+
+      return json({
+        ok: true,
+        analysis
       });
 
     } catch (error) {
-      return new Response(
-        JSON.stringify({
-          error: "Invalid request",
-          message: error.message
-        }),
+      return json(
         {
-          status: 400,
-          headers: {
-            "Content-Type": "application/json"
-          }
-        }
+          ok: false,
+          error: "Server error.",
+          message: error instanceof Error ? error.message : String(error)
+        },
+        500
       );
     }
   }
 };
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  });
+}
