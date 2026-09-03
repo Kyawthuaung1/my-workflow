@@ -11,51 +11,90 @@ export default {
       });
     }
 
-    // CMC test
-    if (request.method === "GET" && url.pathname === "/cmc-test") {
-      const symbol = (url.searchParams.get("symbol") || "BTC").toUpperCase();
+    // CMC market data
+if (request.method === "GET" && url.pathname === "/market") {
+  const input = (
+    url.searchParams.get("symbol") || "BTCUSDT"
+  ).toUpperCase();
 
-      try {
-        const cmcUrl =
-          `https://pro-api.coinmarketcap.com/v3/cryptocurrency/quotes/latest` +
-          `?symbol=${encodeURIComponent(symbol)}&convert=USD`;
+  // BTCUSDT -> BTC
+  const symbol = input.endsWith("USDT")
+    ? input.slice(0, -4)
+    : input;
 
-        const response = await fetch(cmcUrl, {
-          method: "GET",
-          headers: {
-            "Accept": "application/json",
-            "X-CMC_PRO_API_KEY": env.CMC_API_KEY
-          }
-        });
+  try {
+    const cmcUrl =
+      "https://pro-api.coinmarketcap.com/v3/cryptocurrency/quotes/latest" +
+      `?symbol=${encodeURIComponent(symbol)}` +
+      "&convert=USD";
 
-        const data = await response.json();
-
-        if (!response.ok) {
-          return json({
-            ok: false,
-            source: "coinmarketcap",
-            error: "CMC API request failed.",
-            details: data
-          }, response.status);
-        }
-
-        return json({
-          ok: true,
-          source: "coinmarketcap",
-          symbol,
-          data
-        });
-
-      } catch (error) {
-        return json({
-          ok: false,
-          source: "coinmarketcap",
-          error: error instanceof Error
-            ? error.message
-            : String(error)
-        }, 500);
+    const response = await fetch(cmcUrl, {
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+        "X-CMC_PRO_API_KEY": env.CMC_API_KEY
       }
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return json({
+        ok: false,
+        source: "coinmarketcap",
+        input_symbol: input,
+        resolved_symbol: symbol,
+        error: "CMC API request failed.",
+        details: data
+      }, response.status);
     }
+
+    const asset = data?.data?.[symbol];
+
+    if (!asset) {
+      return json({
+        ok: false,
+        source: "coinmarketcap",
+        input_symbol: input,
+        resolved_symbol: symbol,
+        error: "Asset not found on CoinMarketCap."
+      }, 404);
+    }
+
+    const quote = asset?.quote?.USD;
+
+    return json({
+      ok: true,
+      source: "coinmarketcap",
+      input_symbol: input,
+      resolved_symbol: symbol,
+      asset: {
+        id: asset.id,
+        name: asset.name,
+        symbol: asset.symbol
+      },
+      market: {
+        price: quote?.price ?? null,
+        market_cap: quote?.market_cap ?? null,
+        volume_24h: quote?.volume_24h ?? null,
+        percent_change_1h: quote?.percent_change_1h ?? null,
+        percent_change_24h: quote?.percent_change_24h ?? null,
+        percent_change_7d: quote?.percent_change_7d ?? null,
+        last_updated: quote?.last_updated ?? null
+      },
+      cmc_timestamp: data?.status?.timestamp ?? null
+    });
+
+  } catch (error) {
+    return json({
+      ok: false,
+      source: "coinmarketcap",
+      error: error instanceof Error
+        ? error.message
+        : String(error)
+    }, 500);
+  }
+}
 
     // Existing Gemini POST endpoint
     if (request.method !== "POST") {
