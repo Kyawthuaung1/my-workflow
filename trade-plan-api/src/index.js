@@ -99,7 +99,119 @@ if (request.method === "GET" && url.pathname === "/market") {
     }, 500);
   }
 }
+    // CMC historical OHLCV
+    if (request.method === "GET" && url.pathname === "/ohlcv") {
+      const input = (
+        url.searchParams.get("symbol") || "BTCUSDT"
+      ).toUpperCase();
 
+      // BTCUSDT -> BTC
+      const symbol = input.endsWith("USDT")
+        ? input.slice(0, -4)
+        : input;
+
+      const interval = (
+        url.searchParams.get("interval") || "hourly"
+      ).toLowerCase();
+
+      const count = Math.min(
+        Math.max(
+          parseInt(url.searchParams.get("count") || "24", 10),
+          1
+        ),
+        100
+      );
+
+      const timePeriod =
+        interval === "daily"
+          ? "daily"
+          : "hourly";
+
+      try {
+        const cmcUrl =
+          "https://pro-api.coinmarketcap.com/v2/cryptocurrency/ohlcv/historical" +
+          `?symbol=${encodeURIComponent(symbol)}` +
+          `&time_period=${encodeURIComponent(timePeriod)}` +
+          `&count=${count}` +
+          "&convert=USD";
+
+        const response = await fetch(cmcUrl, {
+          method: "GET",
+          headers: {
+            "Accept": "application/json",
+            "X-CMC_PRO_API_KEY": env.CMC_API_KEY
+          }
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          return json({
+            ok: false,
+            source: "coinmarketcap",
+            input_symbol: input,
+            resolved_symbol: symbol,
+            error: "CMC OHLCV request failed.",
+            details: data
+          }, response.status);
+        }
+
+        const asset = Array.isArray(data?.data)
+          ? data.data.find((item) => item?.symbol === symbol)
+          : data?.data;
+
+        if (!asset) {
+          return json({
+            ok: false,
+            source: "coinmarketcap",
+            input_symbol: input,
+            resolved_symbol: symbol,
+            error: "Asset not found in CMC OHLCV response."
+          }, 404);
+        }
+
+        const candles = (asset.quotes || []).map((candle) => {
+          const usd = candle?.quote?.USD || {};
+
+          return {
+            time_open: candle?.time_open ?? null,
+            time_close: candle?.time_close ?? null,
+            open: usd?.open ?? null,
+            high: usd?.high ?? null,
+            low: usd?.low ?? null,
+            close: usd?.close ?? null,
+            volume: usd?.volume ?? null,
+            market_cap: usd?.market_cap ?? null
+          };
+        });
+
+        return json({
+          ok: true,
+          source: "coinmarketcap",
+          input_symbol: input,
+          resolved_symbol: symbol,
+          interval: timePeriod,
+          count_requested: count,
+          count_returned: candles.length,
+          asset: {
+            id: asset.id,
+            name: asset.name,
+            symbol: asset.symbol
+          },
+          candles,
+          cmc_timestamp: data?.status?.timestamp ?? null
+        });
+
+      } catch (error) {
+        return json({
+          ok: false,
+          source: "coinmarketcap",
+          error: error instanceof Error
+            ? error.message
+            : String(error)
+        }, 500);
+      }
+    }
     // Existing Gemini POST endpoint
     if (request.method !== "POST") {
       return json({
