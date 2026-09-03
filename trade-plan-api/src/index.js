@@ -49,7 +49,9 @@ if (request.method === "GET" && url.pathname === "/market") {
       }, response.status);
     }
 
-    const asset = data?.data?.[symbol];
+    const asset = Array.isArray(data?.data)
+  ? data.data.find((item) => item?.symbol === symbol)
+  : data?.data?.[symbol];
 
     if (!asset) {
       return json({
@@ -61,7 +63,9 @@ if (request.method === "GET" && url.pathname === "/market") {
       }, 404);
     }
 
-    const quote = asset?.quote?.USD;
+    const quote = Array.isArray(asset?.quote)
+  ? asset.quote.find((item) => item?.symbol === "USD")
+  : asset?.quote?.USD;
 
     return json({
       ok: true,
