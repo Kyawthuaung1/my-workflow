@@ -99,119 +99,111 @@ if (request.method === "GET" && url.pathname === "/market") {
     }, 500);
   }
 }
-    // CMC historical OHLCV
+    // Binance public OHLCV
     if (request.method === "GET" && url.pathname === "/ohlcv") {
       const input = (
         url.searchParams.get("symbol") || "BTCUSDT"
       ).toUpperCase();
 
-      // BTCUSDT -> BTC
       const symbol = input.endsWith("USDT")
-        ? input.slice(0, -4)
-        : input;
+        ? input
+        : `${input}USDT`;
 
-      const interval = (
-        url.searchParams.get("interval") || "hourly"
+      const intervalInput = (
+        url.searchParams.get("interval") || "1h"
       ).toLowerCase();
+
+      const intervalMap = {
+        "5m": "5m",
+        "15m": "15m",
+        "1h": "1h",
+        "4h": "4h",
+        "1d": "1d",
+        "hourly": "1h",
+        "daily": "1d"
+      };
+
+      const interval = intervalMap[intervalInput];
+
+      if (!interval) {
+        return json({
+          ok: false,
+          source: "binance",
+          error: "Unsupported interval.",
+          supported_intervals: ["5m", "15m", "1h", "4h", "1d"]
+        }, 400);
+      }
 
       const count = Math.min(
         Math.max(
           parseInt(url.searchParams.get("count") || "24", 10),
           1
         ),
-        100
+        1000
       );
 
-      const timePeriod =
-        interval === "daily"
-          ? "daily"
-          : "hourly";
-
       try {
-        const cmcUrl =
-          "https://pro-api.coinmarketcap.com/v2/cryptocurrency/ohlcv/historical" +
+        const binanceUrl =
+          "https://api.binance.com/api/v3/klines" +
           `?symbol=${encodeURIComponent(symbol)}` +
-          `&time_period=${encodeURIComponent(timePeriod)}` +
-          `&count=${count}` +
-          "&convert=USD";
+          `&interval=${encodeURIComponent(interval)}` +
+          `&limit=${count}`;
 
-        const response = await fetch(cmcUrl, {
+        const response = await fetch(binanceUrl, {
           method: "GET",
           headers: {
-            "Accept": "application/json",
-            "X-CMC_PRO_API_KEY": env.CMC_API_KEY
+            "Accept": "application/json"
           }
         });
 
         const data = await response.json();
 
-        if (!response.ok) {
+        if (!response.ok || !Array.isArray(data)) {
           return json({
             ok: false,
-            source: "coinmarketcap",
+            source: "binance",
             input_symbol: input,
             resolved_symbol: symbol,
-            error: "CMC OHLCV request failed.",
+            error: "Binance OHLCV request failed.",
             details: data
-          }, response.status);
+          }, response.status || 502);
         }
 
-        const asset = Array.isArray(data?.data)
-          ? data.data.find((item) => item?.symbol === symbol)
-          : data?.data;
-
-        if (!asset) {
-          return json({
-            ok: false,
-            source: "coinmarketcap",
-            input_symbol: input,
-            resolved_symbol: symbol,
-            error: "Asset not found in CMC OHLCV response."
-          }, 404);
-        }
-
-        const candles = (asset.quotes || []).map((candle) => {
-          const usd = candle?.quote?.USD || {};
-
-          return {
-            time_open: candle?.time_open ?? null,
-            time_close: candle?.time_close ?? null,
-            open: usd?.open ?? null,
-            high: usd?.high ?? null,
-            low: usd?.low ?? null,
-            close: usd?.close ?? null,
-            volume: usd?.volume ?? null,
-            market_cap: usd?.market_cap ?? null
-          };
-        });
+        const candles = data.map((candle) => ({
+          time_open: new Date(Number(candle[0])).toISOString(),
+          time_close: new Date(Number(candle[6])).toISOString(),
+          open: Number(candle[1]),
+          high: Number(candle[2]),
+          low: Number(candle[3]),
+          close: Number(candle[4]),
+          volume: Number(candle[5])
+        }));
 
         return json({
           ok: true,
-          source: "coinmarketcap",
+          source: "binance",
           input_symbol: input,
           resolved_symbol: symbol,
-          interval: timePeriod,
+          interval,
           count_requested: count,
           count_returned: candles.length,
-          asset: {
-            id: asset.id,
-            name: asset.name,
-            symbol: asset.symbol
-          },
-          candles,
-          cmc_timestamp: data?.status?.timestamp ?? null
+          candles
         });
 
       } catch (error) {
         return json({
           ok: false,
-          source: "coinmarketcap",
-          error: error instanceof Error
+          source: "binance",
+          input_symbol: input,
+          resolved_symbol: symbol,
+          error: "Connection to Binance failed.",
+          details: error instanceof Error
             ? error.message
             : String(error)
         }, 500);
       }
     }
+
     // Existing Gemini POST endpoint
     if (request.method !== "POST") {
       return json({
@@ -369,122 +361,3 @@ function json(data, status = 200) {
     }
   });
 }
-    // Binance public OHLCV
-    if (request.method === "GET" && url.pathname === "/ohlcv") {
-      const input = (
-        url.searchParams.get("symbol") || "BTCUSDT"
-      ).toUpperCase();
-
-      const symbol = input.endsWith("USDT")
-        ? input
-        : `${input}USDT`;
-
-      const intervalInput = (
-        url.searchParams.get("interval") || "1h"
-      ).toLowerCase();
-
-      const intervalMap = {
-        "5m": "5m",
-        "15m": "15m",
-        "1h": "1h",
-        "4h": "4h",
-        "1d": "1d",
-        "hourly": "1h",
-        "daily": "1d"
-      };
-
-      const interval = intervalMap[intervalInput];
-
-      if (!interval) {
-        return json({
-          ok: false,
-          source: "binance",
-          error: "Unsupported interval.",
-          supported_intervals: [
-            "5m",
-            "15m",
-            "1h",
-            "4h",
-            "1d"
-          ]
-        }, 400);
-      }
-
-      const count = Math.min(
-        Math.max(
-          parseInt(
-            url.searchParams.get("count") || "24",
-            10
-          ),
-          1
-        ),
-        1000
-      );
-
-      try {
-        const binanceUrl =
-          "https://api.binance.com/api/v3/klines" +
-          `?symbol=${encodeURIComponent(symbol)}` +
-          `&interval=${encodeURIComponent(interval)}` +
-          `&limit=${count}`;
-
-        const response = await fetch(binanceUrl, {
-          method: "GET",
-          headers: {
-            "Accept": "application/json"
-          }
-        });
-
-        const data = await response.json();
-
-        if (!response.ok || !Array.isArray(data)) {
-          return json({
-            ok: false,
-            source: "binance",
-            input_symbol: input,
-            resolved_symbol: symbol,
-            error: "Binance OHLCV request failed.",
-            details: data
-          }, response.status || 502);
-        }
-
-        const candles = data.map((candle) => ({
-          time_open: new Date(
-            Number(candle[0])
-          ).toISOString(),
-
-          time_close: new Date(
-            Number(candle[6])
-          ).toISOString(),
-
-          open: Number(candle[1]),
-          high: Number(candle[2]),
-          low: Number(candle[3]),
-          close: Number(candle[4]),
-          volume: Number(candle[5])
-        }));
-
-        return json({
-          ok: true,
-          source: "binance",
-          input_symbol: input,
-          resolved_symbol: symbol,
-          interval,
-          count_requested: count,
-          count_returned: candles.length,
-          candles
-        });
-
-      } catch (error) {
-        return json({
-          ok: false,
-          source: "binance",
-          input_symbol: input,
-          resolved_symbol: symbol,
-          error: "Connection to Binance failed.",
-          details: error instanceof Error
-            ? error.message
-            : String(error)
-        }, 500);
-      }
-    }
