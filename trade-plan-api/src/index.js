@@ -156,19 +156,40 @@ if (request.method === "GET" && url.pathname === "/market") {
           }
         });
 
-        const data = await response.json();
+        const contentType = response.headers.get("content-type") || "";
+const raw = await response.text();
 
-        if (!response.ok || !Array.isArray(data)) {
-          return json({
-            ok: false,
-            source: "binance",
-            input_symbol: input,
-            resolved_symbol: symbol,
-            error: "Binance OHLCV request failed.",
-            details: data
-          }, response.status || 502);
-        }
+if (!response.ok) {
+  return json({
+    ok: false,
+    source: "binance",
+    input_symbol: input,
+    resolved_symbol: symbol,
+    error: "Binance HTTP request failed.",
+    status: response.status,
+    content_type: contentType,
+    details: raw.slice(0, 500)
+  }, response.status);
+}
 
+let data;
+
+try {
+  data = JSON.parse(raw);
+} catch (e) {
+  return json({
+    ok: false,
+    source: "binance",
+    input_symbol: input,
+    resolved_symbol: symbol,
+    error: "Binance returned non-JSON response.",
+    status: response.status,
+    content_type: contentType,
+    details: raw.slice(0, 500)
+  }, 502);
+}
+
+if (!Array.isArray(data)) {
         const candles = data.map((candle) => ({
           time_open: new Date(Number(candle[0])).toISOString(),
           time_close: new Date(Number(candle[6])).toISOString(),
