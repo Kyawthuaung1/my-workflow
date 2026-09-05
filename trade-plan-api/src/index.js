@@ -99,131 +99,6 @@ if (request.method === "GET" && url.pathname === "/market") {
     }, 500);
   }
 }
-    // Binance public OHLCV
-    if (request.method === "GET" && url.pathname === "/ohlcv") {
-      const input = (
-        url.searchParams.get("symbol") || "BTCUSDT"
-      ).toUpperCase();
-
-      const symbol = input.endsWith("USDT")
-        ? input
-        : `${input}USDT`;
-
-      const intervalInput = (
-        url.searchParams.get("interval") || "1h"
-      ).toLowerCase();
-
-      const intervalMap = {
-        "5m": "5m",
-        "15m": "15m",
-        "1h": "1h",
-        "4h": "4h",
-        "1d": "1d",
-        "hourly": "1h",
-        "daily": "1d"
-      };
-
-      const interval = intervalMap[intervalInput];
-
-      if (!interval) {
-        return json({
-          ok: false,
-          source: "binance",
-          error: "Unsupported interval.",
-          supported_intervals: ["5m", "15m", "1h", "4h", "1d"]
-        }, 400);
-      }
-
-      const count = Math.min(
-        Math.max(
-          parseInt(url.searchParams.get("count") || "24", 10),
-          1
-        ),
-        1000
-      );
-
-      try {
-        const binanceUrl =
-          "https://data-api.binance.vision/api/v3/klines" +
-          `?symbol=${encodeURIComponent(symbol)}` +
-          `&interval=${encodeURIComponent(interval)}` +
-          `&limit=${count}`;
-
-        const response = await fetch(binanceUrl, {
-          method: "GET",
-          headers: {
-            "Accept": "application/json"
-          }
-        });
-
-        const contentType = response.headers.get("content-type") || "";
-const raw = await response.text();
-
-if (!response.ok) {
-  return json({
-    ok: false,
-    source: "binance",
-    input_symbol: input,
-    resolved_symbol: symbol,
-    error: "Binance HTTP request failed.",
-    status: response.status,
-    content_type: contentType,
-    details: raw.slice(0, 500)
-  }, response.status);
-}
-
-let data;
-
-try {
-  data = JSON.parse(raw);
-} catch (e) {
-  return json({
-    ok: false,
-    source: "binance",
-    input_symbol: input,
-    resolved_symbol: symbol,
-    error: "Binance returned non-JSON response.",
-    status: response.status,
-    content_type: contentType,
-    details: raw.slice(0, 500)
-  }, 502);
-}
-
-if (!Array.isArray(data)) {
-        const candles = data.map((candle) => ({
-          time_open: new Date(Number(candle[0])).toISOString(),
-          time_close: new Date(Number(candle[6])).toISOString(),
-          open: Number(candle[1]),
-          high: Number(candle[2]),
-          low: Number(candle[3]),
-          close: Number(candle[4]),
-          volume: Number(candle[5])
-        }));
-
-        return json({
-          ok: true,
-          source: "binance",
-          input_symbol: input,
-          resolved_symbol: symbol,
-          interval,
-          count_requested: count,
-          count_returned: candles.length,
-          candles
-        });
-
-      } catch (error) {
-        return json({
-          ok: false,
-          source: "binance",
-          input_symbol: input,
-          resolved_symbol: symbol,
-          error: "Connection to Binance failed.",
-          details: error instanceof Error
-            ? error.message
-            : String(error)
-        }, 500);
-      }
-    }
 
     // Existing Gemini POST endpoint
     if (request.method !== "POST") {
@@ -337,46 +212,48 @@ ${JSON.stringify(marketData)}
         })
       });
 
-      const contentType = response.headers.get("content-type") || "";
-const raw = await response.text();
+      const data = await response.json();
 
-if (!response.ok) {
-  return json({
-    ok: false,
-    source: "binance",
-    input_symbol: input,
-    resolved_symbol: symbol,
-    error: "Binance HTTP request failed.",
-    status: response.status,
-    content_type: contentType,
-    details: raw.slice(0, 500)
-  }, response.status);
-}
+      if (!response.ok) {
+        return json({
+          ok: false,
+          error: "Gemini API request failed.",
+          details: data
+        }, response.status);
+      }
 
-let data;
+      const text =
+        data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-try {
-  data = JSON.parse(raw);
-} catch (error) {
-  return json({
-    ok: false,
-    source: "binance",
-    input_symbol: input,
-    resolved_symbol: symbol,
-    error: "Binance returned non-JSON response.",
-    status: response.status,
-    content_type: contentType,
-    details: raw.slice(0, 500)
-  }, 502);
-}
+      if (!text) {
+        return json({
+          ok: false,
+          error: "Gemini returned no analysis."
+        }, 502);
+      }
 
-if (!Array.isArray(data)) {
-  return json({
-    ok: false,
-    source: "binance",
-    input_symbol: input,
-    resolved_symbol: symbol,
-    error: "Unexpected Binance response format.",
-    details: data
-  }, 502);
+      return json({
+        ok: true,
+        analysis: JSON.parse(text)
+      });
+
+    } catch (error) {
+      return json({
+        ok: false,
+        error: "Server error.",
+        message: error instanceof Error
+          ? error.message
+          : String(error)
+      }, 500);
+    }
+  }
+};
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  });
 }
