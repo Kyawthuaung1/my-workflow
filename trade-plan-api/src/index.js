@@ -337,48 +337,46 @@ ${JSON.stringify(marketData)}
         })
       });
 
-      const data = await response.json();
+      const contentType = response.headers.get("content-type") || "";
+const raw = await response.text();
 
-      if (!response.ok) {
-        return json({
-          ok: false,
-          error: "Gemini API request failed.",
-          details: data
-        }, response.status);
-      }
+if (!response.ok) {
+  return json({
+    ok: false,
+    source: "binance",
+    input_symbol: input,
+    resolved_symbol: symbol,
+    error: "Binance HTTP request failed.",
+    status: response.status,
+    content_type: contentType,
+    details: raw.slice(0, 500)
+  }, response.status);
+}
 
-      const text =
-        data?.candidates?.[0]?.content?.parts?.[0]?.text;
+let data;
 
-      if (!text) {
-        return json({
-          ok: false,
-          error: "Gemini returned no analysis."
-        }, 502);
-      }
+try {
+  data = JSON.parse(raw);
+} catch (error) {
+  return json({
+    ok: false,
+    source: "binance",
+    input_symbol: input,
+    resolved_symbol: symbol,
+    error: "Binance returned non-JSON response.",
+    status: response.status,
+    content_type: contentType,
+    details: raw.slice(0, 500)
+  }, 502);
+}
 
-      return json({
-        ok: true,
-        analysis: JSON.parse(text)
-      });
-
-    } catch (error) {
-      return json({
-        ok: false,
-        error: "Server error.",
-        message: error instanceof Error
-          ? error.message
-          : String(error)
-      }, 500);
-    }
-  }
-};
-
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data, null, 2), {
-    status,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8"
-    }
-  });
+if (!Array.isArray(data)) {
+  return json({
+    ok: false,
+    source: "binance",
+    input_symbol: input,
+    resolved_symbol: symbol,
+    error: "Unexpected Binance response format.",
+    details: data
+  }, 502);
 }
