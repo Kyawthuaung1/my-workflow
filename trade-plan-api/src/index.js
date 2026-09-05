@@ -144,7 +144,7 @@ if (request.method === "GET" && url.pathname === "/market") {
 
       try {
         const binanceUrl =
-          "https://api.binance.com/api/v3/klines" +
+          "https://data-api.binance.vision/api/v3/klines" +
           `?symbol=${encodeURIComponent(symbol)}` +
           `&interval=${encodeURIComponent(interval)}` +
           `&limit=${count}`;
